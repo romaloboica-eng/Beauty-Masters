@@ -1,74 +1,57 @@
-import { db, auth, playSound } from './firebase-config.js';
-import { collection, query, where, onSnapshot, updateDoc, doc } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+// Данные мастеров
+const MASTERS = [
+  { id: "master1", name: "Наталья", spec: "Ресницы / Брови" },
+  { id: "master2", name: "Кристина", spec: "Ресницы" },
+  { id: "master3", name: "Таня", spec: "Ресницы / Брови" },
+  { id: "master4", name: "Анна", spec: "Стилист" },
+  { id: "master5", name: "Елена", spec: "Маникюр" }
+];
 
 let currentMasterId = null;
 let currentRequestForTimes = null;
 let proposedTimesArray = [];
 let currentTab = 'new';
-let unsubscribe = null;
 let flatpickrInstance = null;
 
-const masters = [
-  { id: "master1", name: "Анна Иванова" },
-  { id: "master2", name: "Елена Петрова" },
-  { id: "master3", name: "Мария Сидорова" }
-];
+let requests = JSON.parse(localStorage.getItem('beauty_requests')) || [];
+
+function saveRequests() {
+  localStorage.setItem('beauty_requests', JSON.stringify(requests));
+}
 
 function loadMasterSelect() {
   const select = document.getElementById('masterSelect');
-  if (!select) {
-    console.error('masterSelect не найден');
-    return;
-  }
+  if (!select) return;
   
-  select.innerHTML = masters.map(m => `<option value="${m.id}">${m.name}</option>`).join('');
+  select.innerHTML = MASTERS.map(m => `<option value="${m.id}">${m.name} (${m.spec})</option>`).join('');
   select.onchange = (e) => {
     currentMasterId = e.target.value;
-    console.log('Выбран мастер:', currentMasterId);
     loadRequests();
   };
-  currentMasterId = masters[0].id;
+  currentMasterId = MASTERS[0].id;
   loadRequests();
 }
 
 function loadRequests() {
-  if (unsubscribe) unsubscribe();
-  
-  if (!currentMasterId) {
-    console.log('Нет выбранного мастера');
-    return;
-  }
-  
-  console.log('Загружаем заявки для мастера:', currentMasterId);
-  
-  const q = query(collection(db, 'requests'), where('masterId', '==', currentMasterId));
-  unsubscribe = onSnapshot(q, (snapshot) => {
-    const requests = [];
-    snapshot.forEach(doc => {
-      requests.push({ id: doc.id, ...doc.data() });
-    });
-    console.log('Получено заявок:', requests.length);
-    filterAndDisplayRequests(requests);
-    updateTabCounters(requests);
-  }, (error) => {
-    console.error('Ошибка загрузки:', error);
-  });
+  const masterRequests = requests.filter(r => r.masterId === currentMasterId);
+  filterAndDisplayRequests(masterRequests);
+  updateTabCounters(masterRequests);
 }
 
-function filterAndDisplayRequests(requests) {
+function filterAndDisplayRequests(masterRequests) {
   let filtered = [];
   switch(currentTab) {
     case 'new': 
-      filtered = requests.filter(r => r.status === 'pending'); 
+      filtered = masterRequests.filter(r => r.status === 'pending'); 
       break;
     case 'waiting': 
-      filtered = requests.filter(r => r.status === 'waiting_for_time'); 
+      filtered = masterRequests.filter(r => r.status === 'waiting_for_time'); 
       break;
     case 'confirmed': 
-      filtered = requests.filter(r => r.status === 'confirmed'); 
+      filtered = masterRequests.filter(r => r.status === 'confirmed'); 
       break;
     case 'completed': 
-      filtered = requests.filter(r => r.status === 'completed'); 
+      filtered = masterRequests.filter(r => r.status === 'completed'); 
       break;
   }
   
@@ -82,15 +65,13 @@ function filterAndDisplayRequests(requests) {
   
   container.innerHTML = filtered.map(req => `
     <div class="request-card" data-id="${req.id}">
-      <div><strong>${req.clientName}</strong></div>
-      <div>Услуга: ${req.service}</div>
-      <div>Дата заявки: ${req.createdAt ? new Date(req.createdAt).toLocaleString() : 'только что'}</div>
+      <strong>${req.clientName}</strong>
+      <div>${req.service}</div>
+      <div>${new Date(req.createdAt).toLocaleString()}</div>
       ${req.confirmedTime ? `<div>Подтверждено: ${req.confirmedTime}</div>` : ''}
       ${req.masterRating ? `<div>Оценка клиента: ${req.masterRating}/5</div>` : ''}
       ${req.clientRating ? `<div>Ваша оценка: ${req.clientRating}/5</div>` : ''}
-      <div style="margin-top: 15px;">
-        ${getActionButtons(req)}
-      </div>
+      <div style="margin-top: 15px;">${getActionButtons(req)}</div>
     </div>
   `).join('');
   
@@ -99,9 +80,8 @@ function filterAndDisplayRequests(requests) {
     if (card) {
       const proposeBtn = card.querySelector('.propose-time-btn');
       if (proposeBtn) proposeBtn.onclick = () => openTimePicker(req.id);
-      
       const completeBtn = card.querySelector('.complete-btn');
-      if (completeBtn) completeBtn.onclick = () => openClientRating(req.id, req.clientName);
+      if (completeBtn) completeBtn.onclick = () => openClientRating(req.id);
     }
   });
 }
@@ -208,24 +188,22 @@ window.removeTime = (time) => {
   `).join('');
 };
 
-document.getElementById('sendTimesBtn').onclick = async () => {
+document.getElementById('sendTimesBtn').onclick = () => {
   if (proposedTimesArray.length === 0) {
     alert('Добавьте хотя бы одно время');
     return;
   }
   
-  try {
-    await updateDoc(doc(db, 'requests', currentRequestForTimes), {
-      status: 'waiting_for_time',
-      proposedTimes: proposedTimesArray
-    });
-    playSound('notification');
-    alert('Время отправлено клиенту');
-    closeTimePickerModal();
-  } catch (error) {
-    console.error('Ошибка отправки времени:', error);
-    alert('Ошибка при отправке');
+  const index = requests.findIndex(r => r.id === currentRequestForTimes);
+  if (index !== -1) {
+    requests[index].status = 'waiting_for_time';
+    requests[index].proposedTimes = proposedTimesArray;
+    saveRequests();
   }
+  
+  alert('Время отправлено клиенту');
+  closeTimePickerModal();
+  loadRequests();
 };
 
 window.closeTimePickerModal = () => {
@@ -238,25 +216,23 @@ window.closeTimePickerModal = () => {
 
 let currentCompleteRequestId = null;
 
-window.openClientRating = (requestId, clientName) => {
+window.openClientRating = (requestId) => {
   currentCompleteRequestId = requestId;
   document.getElementById('clientRatingModal').style.display = 'flex';
 };
 
-window.rateClient = async (rating) => {
-  try {
-    await updateDoc(doc(db, 'requests', currentCompleteRequestId), {
-      status: 'completed',
-      clientRating: rating,
-      completedAt: new Date().toISOString()
-    });
-    playSound('complete');
-    alert(`Запись завершена! Оценка клиенту: ${rating}/5`);
-    closeClientRatingModal();
-  } catch (error) {
-    console.error('Ошибка завершения:', error);
-    alert('Ошибка при завершении');
+window.rateClient = (rating) => {
+  const index = requests.findIndex(r => r.id === currentCompleteRequestId);
+  if (index !== -1) {
+    requests[index].status = 'completed';
+    requests[index].clientRating = rating;
+    requests[index].completedAt = new Date().toISOString();
+    saveRequests();
   }
+  
+  alert(`Запись завершена! Оценка клиенту: ${rating}/5`);
+  closeClientRatingModal();
+  loadRequests();
 };
 
 window.closeClientRatingModal = () => {
@@ -264,7 +240,5 @@ window.closeClientRatingModal = () => {
   currentCompleteRequestId = null;
 };
 
-auth.onAuthStateChanged((user) => {
-  console.log('Auth состояние мастера:', user);
-  loadMasterSelect();
-});
+// Запуск
+loadMasterSelect();
